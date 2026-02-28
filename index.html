@@ -52,6 +52,7 @@
   transform: scale(0.95);
 }
 
+
 /* 横画面用レイアウト */
 @media (orientation: landscape) {
 
@@ -100,9 +101,9 @@ alt="出勤クエスト"
            placeholder="コードを入力"
            class="code-input"/>
 
-    <button class="primary" onclick="login()">
-      ログイン
-    </button>
+ <button class="primary" onclick="login()">
+  ログイン
+</button>
   </div>
 
   <!-- 右側：テンキー -->
@@ -132,9 +133,20 @@ alt="出勤クエスト"
   <section id="viewEmployee" class="hidden">
     <div class="topstats">
       <div class="card">
-        <div class="muted">今日のポイント</div>
-        <div id="todayPoints" style="font-size:24px;">0</div>
-      </div>
+
+  <div id="levelInfo" style="margin-top:8px;font-weight:bold;"></div>
+  <div id="expInfo" class="muted"></div>
+  <div id="nextLevelInfo" class="muted" style="margin-top:4px;"></div>
+
+  <div style="background:#1f2937;border-radius:999px;height:14px;margin-top:6px;overflow:hidden;">
+    <div id="expBar"
+         style="height:100%;width:0%;background:#2563eb;transition:width .4s;"></div>
+  </div>
+
+  <div class="muted" style="margin-top:10px;">今日のポイント</div>
+  <div id="todayPoints" style="font-size:24px;">0</div>
+
+</div>
       <div class="card">
 　  <h3>ポイント交換</h3>
       <div id="rewardShop"></div>
@@ -287,7 +299,11 @@ function load(){
       state = JSON.parse(raw);
     }catch(e){}
   }
-
+Object.values(state.employees).forEach(emp=>{
+  if(emp.totalEarned === undefined){
+    emp.totalEarned = emp.totalPoints || 0;
+  }
+});
   // ⭐ ここが保険
   if(!state.rewards) state.rewards = [];
   if(!state.shiftTable) state.shiftTable = {};
@@ -373,9 +389,56 @@ function showTab(id){
 /* ================= EMPLOYEE ================= */
 
 function renderEmployee(){
-  const rec=state.today.progress[currentUser];
-  document.getElementById("todayPoints").textContent=rec.todayPoints;
-  document.getElementById("totalPoints").textContent=state.employees[currentUser].totalPoints||0;
+
+  if(!currentUser) return;   // ← これ超重要
+
+  const rec = state.today.progress[currentUser];
+  if(!rec) return;
+
+  const emp = state.employees[currentUser];
+  if(!emp) return;
+
+  document.getElementById("todayPoints").textContent = rec.todayPoints;
+  document.getElementById("totalPoints").textContent = emp.totalPoints || 0;
+
+const earned = emp.totalEarned || 0;
+const levelData = getLevelInfo(earned);
+
+document.getElementById("levelInfo").innerHTML =
+  `Lv.${levelData.level} 【${levelData.title}】`;
+
+document.getElementById("expInfo").textContent =
+  `累計経験値：${earned} XP`;
+
+const nextReq = getNextLevelRequirement(earned);
+
+if(nextReq){
+
+  const remain = nextReq - earned;
+
+  document.getElementById("nextLevelInfo").textContent =
+    `次のレベルまで あと ${remain} XP`;
+
+  let currentBase = 0;
+
+  if(earned >= 1000) currentBase = 1000;
+  else if(earned >= 600) currentBase = 600;
+  else if(earned >= 300) currentBase = 300;
+  else if(earned >= 100) currentBase = 100;
+
+  const percent =
+    ((earned - currentBase) / (nextReq - currentBase)) * 100;
+
+  document.getElementById("expBar").style.width =
+    percent + "%";
+
+}else{
+
+  document.getElementById("nextLevelInfo").textContent =
+    "★ 最大レベル ★";
+
+  document.getElementById("expBar").style.width = "100%";
+}
 
   const list=document.getElementById("questList");
   list.innerHTML="";
@@ -407,26 +470,7 @@ btn.onclick=()=>toggleQuest(q.id);
 renderEmployeeRanking();
 }
 
-function toggleQuest(id){
 
-  // ⭐ シフトチェック
-  if(!isShiftDay()){
-    alert("今日は出勤日ではありません。ポイントは加算できません。");
-    return;
-  }
-
-  const rec=state.today.progress[currentUser];
-  if(rec.checked[id]) return;
-
-  const q=state.quests.find(x=>x.id===id);
-
-  rec.checked[id]=true;
-  rec.todayPoints+=q.points;
-  state.employees[currentUser].totalPoints+=q.points;
-
-  save();
-  renderEmployee();
-}
 
 /* ================= ADMIN ================= */
 
@@ -438,8 +482,13 @@ function addEmployee(){
   if(!code||!name||!shift) return alert("入力してください");
   if(state.employees[code]) return alert("既に存在します");
 
-  state.employees[code]={name,shiftName:shift,totalPoints:0};
-  save();
+ state.employees[code]={
+  name,
+  shiftName:shift,
+  totalPoints:0,
+  totalEarned:0   // ⭐追加
+};
+   save();
   renderAdmin();
 }
 
@@ -453,31 +502,114 @@ function addQuest(){
 }
 
 function renderAdmin(){
-  /* 従業員 */
-  const empList=document.getElementById("employeeList");
-  empList.innerHTML="";
+
+  /* ===== 従業員 ===== */
+  const empList = document.getElementById("employeeList");
+  empList.innerHTML = "";
+
   Object.entries(state.employees).forEach(([code,emp])=>{
-    const row=document.createElement("div");
-    row.className="item";
-    row.innerHTML=`<div><strong>${emp.name}</strong> (${code}) <span class="badge">${emp.totalPoints}pt</span></div>`;
+
+    const row = document.createElement("div");
+    row.className = "item";
+
+    row.innerHTML = `
+      <div>
+        <strong>${emp.name}</strong> (${code})
+        <span class="badge">${emp.totalPoints || 0}pt</span>
+      </div>
+    `;
+
+    const del = document.createElement("button");
+    del.textContent = "削除";
+    del.className = "warn";
+
+    del.onclick = ()=>{
+      if(confirm("本当に削除しますか？")){
+        delete state.employees[code];
+        delete state.today.progress[code];
+        save();
+        renderAdmin();
+      }
+    };
+
+    row.appendChild(del);
     empList.appendChild(row);
-    renderExchangeHistory();
-    renderRanking();
   });
 
-  /* クエスト */
-  const questList=document.getElementById("questAdminList");
+  /* ===== クエスト ===== */
+  const questList = document.getElementById("questAdminList");
   if(questList){
-    questList.innerHTML="";
+    questList.innerHTML = "";
+
     state.quests.forEach(q=>{
-      const row=document.createElement("div");
-      row.className="item";
-      row.innerHTML=`<div><strong>${q.title}</strong> <span class="badge">${q.points}pt</span></div>`;
+      const row = document.createElement("div");
+      row.className = "item";
+
+      row.innerHTML = `
+        <div>
+          <strong>${q.title}</strong>
+          <span class="badge">${q.points}pt</span>
+        </div>
+      `;
+
+      const del = document.createElement("button");
+      del.textContent = "削除";
+      del.className = "warn";
+
+      del.onclick = ()=>{
+        if(confirm("本当に削除しますか？")){
+          state.quests = state.quests.filter(x=>x.id!==q.id);
+
+          // 進捗からも削除
+          Object.values(state.today.progress).forEach(p=>{
+            delete p.checked[q.id];
+          });
+
+          save();
+          renderAdmin();
+        }
+      };
+
+      row.appendChild(del);
       questList.appendChild(row);
     });
   }
+renderAdminRewards();
+  }
 
-  renderAdminRewards();
+function renderAdminRewards(){
+  const list = document.getElementById("rewardAdminList");
+  if(!list) return;
+
+  list.innerHTML = "";
+
+  state.rewards.forEach(r=>{
+
+    const row = document.createElement("div");
+    row.className = "item";
+
+    row.innerHTML = `
+      <div>
+        <strong>${r.title}</strong>
+        <span class="badge">${r.cost}pt</span>
+      </div>
+    `;
+
+    const del = document.createElement("button");
+    del.textContent = "削除";
+    del.className = "warn";
+
+    del.onclick = ()=>{
+      if(confirm("本当に削除しますか？")){
+        state.rewards = state.rewards.filter(x=>x.id!==r.id);
+        save();
+        renderAdminRewards();
+      }
+    };
+
+    row.appendChild(del);
+    list.appendChild(row);
+  });
 }
 
 /* ================= REWARDS ================= */
@@ -491,17 +623,6 @@ function addReward(){
   renderAdminRewards();
 }
 
-function renderAdminRewards(){
-  const list=document.getElementById("rewardAdminList");
-  if(!list) return;
-  list.innerHTML="";
-  state.rewards.forEach(r=>{
-    const row=document.createElement("div");
-    row.className="item";
-    row.innerHTML=`<div><strong>${r.title}</strong> <span class="badge">${r.cost}pt</span></div>`;
-    list.appendChild(row);
-  });
-}
 
 function showRewardShop(){
   const shop=document.getElementById("rewardShop");
@@ -808,6 +929,120 @@ function renderEmployeeRanking(){
 
     container.appendChild(row);
   });
+}
+function getLevelInfo(totalPoints){
+
+  if(totalPoints >= 1000){
+    return {level:5, title:"店舗の守護神"};
+  }
+  if(totalPoints >= 600){
+    return {level:4, title:"前陳の達人"};
+  }
+  if(totalPoints >= 300){
+    return {level:3, title:"清掃マスター"};
+  }
+  if(totalPoints >= 100){
+    return {level:2, title:"見習い戦士"};
+  }
+
+  return {level:1, title:"新人クルー"};
+}
+function getNextLevelRequirement(total){
+
+  if(total < 100) return 100;
+  if(total < 300) return 300;
+  if(total < 600) return 600;
+  if(total < 1000) return 1000;
+
+  return null; // 最大レベル
+}
+function showLevelUpPopup(level){
+
+  // 音を鳴らす
+  playLevelUpSound();
+
+  const popup = document.createElement("div");
+  popup.style.position="fixed";
+  popup.style.top="50%";
+  popup.style.left="50%";
+  popup.style.transform="translate(-50%,-50%)";
+  popup.style.background="#2563eb";
+  popup.style.color="white";
+  popup.style.padding="20px 30px";
+  popup.style.borderRadius="16px";
+  popup.style.fontSize="22px";
+  popup.style.fontWeight="bold";
+  popup.style.boxShadow="0 10px 30px rgba(0,0,0,.5)";
+  popup.style.zIndex="9999";
+  popup.innerHTML=`✨ レベルアップ！<br>Lv.${level} ✨`;
+
+  document.body.appendChild(popup);
+
+  setTimeout(()=>{
+    popup.remove();
+  },2000);
+}
+function playLevelUpSound(){
+
+  const audio = new Audio(
+    "https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"
+  );
+
+  audio.volume = 0.5;
+  audio.play();
+}
+function toggleQuest(id){
+
+  if(!isShiftDay()){
+    showSimpleNotice("今日は出勤日ではありません");
+    return;
+  }
+
+  const rec = state.today.progress[currentUser];
+  if(rec.checked[id]) return;
+
+  const q = state.quests.find(x=>x.id===id);
+  if(!q) return;
+
+  const emp = state.employees[currentUser];
+
+  const oldLevel = getLevelInfo(emp.totalEarned || 0).level;
+
+  rec.checked[id] = true;
+  rec.todayPoints += q.points;
+
+  emp.totalPoints += q.points;
+  emp.totalEarned += q.points;
+
+  const newLevel = getLevelInfo(emp.totalEarned).level;
+
+  save();
+  renderEmployee();
+
+  if(newLevel > oldLevel){
+    showLevelUpPopup(newLevel);
+  }
+}
+function showSimpleNotice(text){
+
+  const notice = document.createElement("div");
+  notice.textContent = text;
+
+  notice.style.position="fixed";
+  notice.style.bottom="40px";
+  notice.style.left="50%";
+  notice.style.transform="translateX(-50%)";
+  notice.style.background="#111";
+  notice.style.color="#fff";
+  notice.style.padding="12px 20px";
+  notice.style.borderRadius="12px";
+  notice.style.zIndex="9999";
+
+  document.body.appendChild(notice);
+
+  setTimeout(()=>{
+    notice.remove();
+  },2000);
 }
 </script>
 </body>
