@@ -984,13 +984,15 @@ function showLevelUpPopup(level){
 }
 function playLevelUpSound(){
 
-  const audio = new Audio(
-    "https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"
-  );
+  const audio = new Audio("levelup.mp3");
 
-  audio.volume = 0.5;
-  audio.play();
+  audio.volume = 0.7;
+
+  audio.play().catch(err=>{
+    console.log("音再生エラー", err);
+  });
 }
+
 function toggleQuest(id){
 
   if(!isShiftDay()){
